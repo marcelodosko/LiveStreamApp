@@ -23,25 +23,26 @@ class App extends Component {
     super(props);
     this.state = { 
       username: '',
-      videoURL: null,
-      videoURLRemote: null,
-      isFront: true,
-      pc: null,
-      ws: new WebSocket('ws://192.168.0.27:3001'),
+      connection: null,
+      ws: new WebSocket('ws://192.168.0.28:3001'),
       otherUsername: null,
       login:false,
+      channel: null,
+      jsonName: '',
+      countMsg: 0,
     };
   }
 
   componentWillMount() {
     const { ws } = this.state
     console.log('ws', ws)
+    
     ws.onopen = () => {
       console.log('Connected to the signaling server')
     }
 
     ws.onerror = err => {
-      console.error(err)
+      console.error('ws.onerror', err)
     }
 
     ws.onmessage = msg => {
@@ -97,48 +98,34 @@ class App extends Component {
     } else {
 
       const configuration = {"iceServers": [{"url": "stun:stun.l.google.com:19302"}]};
-      const pc = new RTCPeerConnection(configuration);
-      this.setState({ pc, login: success })
-      let isFront = true;
-      mediaDevices.enumerateDevices().then(sourceInfos => {
-          let videoSourceId;
-          for (let i = 0; i < sourceInfos.length; i++) {
-            const sourceInfo = sourceInfos[i];
-            if(sourceInfo.kind == "videoinput" && sourceInfo.facing == (isFront ? "front" : "back")) {
-              videoSourceId = sourceInfo.deviceId;
-            }
-          }
-          mediaDevices.getUserMedia({
-            audio: true,
-            video: {
-              mandatory: {
-                minWidth: 500, // Provide your own width, height and frame rate here
-                minHeight: 300,
-                minFrameRate: 30
-              },
-              facingMode: (isFront ? "user" : "environment"),
-              optional: (videoSourceId ? [{sourceId: videoSourceId}] : [])
-            }
-          })
-          .then(stream => {
-                console.log(stream)
-                this.setState({
-                    videoURL: stream.toURL()
-                });
-                pc.addStream(stream);
-            }, error => {
-                console.log('Oops, we getting error', error.message);
-                throw error;
-            });
-        });
+      const connection = new RTCPeerConnection(configuration, { optional: [{ RtpDataChannels: true}] });
+      this.setState({ connection, login: success })
+      
+      const channel = connection.createDataChannel('RtpDataChannels')
+                this.setState({ channel })
 
-         pc.onaddstream = event => {
-           this.setState({
-                    videoURLRemote:  event.stream.toURL()
-                });
-                 
-        }
-        pc.onicecandidate = (event) => {
+      connection.ondatachannel = event => {
+        event.channel.onmessage = event => {
+          const { countMsg } = this.state
+          this.setState({ countMsg: countMsg + 1})
+          // console.log('event.channel.onmessage', event.data);
+        };
+
+        event.channel.onopen = event => {
+          console.log('event.channel.onopen', event)
+            // channel.send('RTCDataChannel opened.', event);
+        };
+        
+        event.channel.onclose = event => {
+            console.log('RTCDataChannel closed.', event);
+        };
+        
+        event.channel.onerror = event => {
+            console.error('event.channel.onerror', event);
+        };
+      }
+
+        connection.onicecandidate = (event) => {
             if (event.candidate) {
             this.sendMessage({
               type: 'candidate',
@@ -150,25 +137,24 @@ class App extends Component {
   }
   
   callOtherUser = () => {
-    const { pc } = this.state
-    pc.createOffer().then(
+    const { connection } = this.state
+    connection.createOffer().then(
     offer => {
       this.sendMessage({
         type: 'offer',
         offer: offer
       })
-
-      pc.setLocalDescription(offer)
+      connection.setLocalDescription(offer)
     });
   }
 
   handleOffer = (offer, username) => {
-    const { pc } = this.state
+    const { connection } = this.state
     this.setState({ otherUsername: username })
-    pc.setRemoteDescription(new RTCSessionDescription(offer))
-    pc.createAnswer(
+    connection.setRemoteDescription(new RTCSessionDescription(offer))
+    connection.createAnswer().then(
       answer => {
-        pc.setLocalDescription(answer)
+        connection.setLocalDescription(answer)
         this.sendMessage({
           type: 'answer',
           answer: answer
@@ -176,37 +162,42 @@ class App extends Component {
       },
       error => {
         alert('Error when creating an answer')
-        console.error(error)
+        console.error('createAnswer error', error)
       }
     )
   }
 
   handleAnswer = answer => {
-    const { pc } = this.state
-    pc.setRemoteDescription(new RTCSessionDescription(answer))
+    const { connection } = this.state
+    connection.setRemoteDescription(new RTCSessionDescription(answer))
   }
 
   handleCandidate = candidate => {
-    const { pc } = this.state
-    pc.addIceCandidate(new RTCIceCandidate(candidate))
+    const { connection } = this.state
+    connection.addIceCandidate(new RTCIceCandidate(candidate))
   }
 
   handleClose = () => {
-    const { pc } = this.state
+    const { connection } = this.state
     this.setState({ otherUsername: null })
-    pc.close()
-    pc.onicecandidate = null
-    pc.onaddstream = null
+    connection.close()
+    connection.onicecandidate = null
+    connection.onaddstream = null
+  }
+
+  getJson = () => {
+    const { jsonName, channel } = this.state
+    channel.send(jsonName)
   }
 
   render() {
-    const { login } = this.state
+    const { login, countMsg } = this.state
     return (
       <View style={styles.container}>
         { !login ?
           (
             <View>
-              <Text style={styles.welcome}>ingrese Nombre!</Text>
+              <Text style={styles.welcome}>enter name</Text>
               <TextInput
                 style={{height: 40, width: 150, borderColor: 'gray', borderWidth: 1}}
                 onChangeText={username => this.setState({username})}
@@ -220,8 +211,6 @@ class App extends Component {
             </View>
           ) : (
             <View>
-              <RTCView streamURL={this.state.videoURL} style={styles.containerVideo} />
-              <RTCView streamURL={this.state.videoURLRemote} style={styles.containerVideo} />
               <Text style={styles.welcome}>connect with peer!</Text>
               <TextInput
                 style={{height: 40, width: 250, borderColor: 'gray', borderWidth: 1}}
@@ -233,6 +222,18 @@ class App extends Component {
                 title="Call other user"
                 color="#841584"
               /> 
+              <Text style={styles.welcome}>json name</Text>
+              <Text style={styles.welcome}>{countMsg}</Text>
+              {/* <TextInput
+                style={{height: 40, width: 250, borderColor: 'gray', borderWidth: 1}}
+                onChangeText={jsonName => this.setState({jsonName})}
+                value={this.state.jsonName}
+              />
+              <Button
+                onPress={this.getJson}
+                title="get json"
+                color="#841584"
+              />  */}
               <Button
                 onPress={this.handleClose}
                 title="Close connection"
