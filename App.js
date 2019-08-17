@@ -22,14 +22,15 @@ class App extends Component {
     constructor(props) {
     super(props);
     this.state = { 
-      username: '',
+      username: 'A',
       connection: null,
-      ws: new WebSocket('ws://192.168.0.28:3001'),
+      ws: new WebSocket('ws://192.168.0.31:3501'),
       otherUsername: null,
       login:false,
       channel: null,
       jsonName: '',
-      countMsg: 0,
+      countMsg: 2,
+      testType: '',
     };
   }
 
@@ -62,6 +63,13 @@ class App extends Component {
           break
         case 'candidate':
           this.handleCandidate(data.candidate)
+          break
+        case 'setCantMjes':
+          this.setState({ countMsg: parseInt(data.cantMjes), testType: 'websocket'})
+          break
+        case 'loremIpsum':
+          const { countMsg } = this.state
+          this.setState({ countMsg: countMsg - 1})
           break
         case 'close':
           this.handleClose()
@@ -99,6 +107,7 @@ class App extends Component {
 
       const configuration = {"iceServers": [{"url": "stun:stun.l.google.com:19302"}]};
       const connection = new RTCPeerConnection(configuration, { optional: [{ RtpDataChannels: true}] });
+      console.log('new RTCPeerConnection connection', connection)
       this.setState({ connection, login: success })
       
       const channel = connection.createDataChannel('RtpDataChannels')
@@ -106,9 +115,9 @@ class App extends Component {
 
       connection.ondatachannel = event => {
         event.channel.onmessage = event => {
+          if (event.data.length < 10 ) this.setState({ countMsg: parseInt(event.data), testType: 'webrtc'})
           const { countMsg } = this.state
-          this.setState({ countMsg: countMsg + 1})
-          // console.log('event.channel.onmessage', event.data);
+          this.setState({ countMsg: countMsg - 1})
         };
 
         event.channel.onopen = event => {
@@ -126,6 +135,7 @@ class App extends Component {
       }
 
         connection.onicecandidate = (event) => {
+          console.log('iceCandidate', event.candidate)
             if (event.candidate) {
             this.sendMessage({
               type: 'candidate',
@@ -190,19 +200,24 @@ class App extends Component {
     channel.send(jsonName)
   }
 
+  stopAdb = () => {
+    const { ws, testType } = this.state
+    ws.send(JSON.stringify({type: 'stopADB', testType}))
+  }
+
+  startTest = () => {
+    const { ws } = this.state
+    ws.send(JSON.stringify({type: 'startTestWebSocket'}))
+  }
+
   render() {
     const { login, countMsg } = this.state
+    if (countMsg === 0) this.stopAdb()
     return (
       <View style={styles.container}>
         { !login ?
           (
-            <View>
-              <Text style={styles.welcome}>enter name</Text>
-              <TextInput
-                style={{height: 40, width: 150, borderColor: 'gray', borderWidth: 1}}
-                onChangeText={username => this.setState({username})}
-                value={this.state.username}
-              />
+            <View style={styles.containerButton}>
               <Button
                 onPress={this.login}
                 title="login"
@@ -217,28 +232,15 @@ class App extends Component {
                 onChangeText={otherUsername => this.setState({otherUsername})}
                 value={this.state.otherUsername}
               />
-              <Button
-                onPress={this.callOtherUser}
-                title="Call other user"
-                color="#841584"
-              /> 
-              <Text style={styles.welcome}>json name</Text>
-              <Text style={styles.welcome}>{countMsg}</Text>
-              {/* <TextInput
-                style={{height: 40, width: 250, borderColor: 'gray', borderWidth: 1}}
-                onChangeText={jsonName => this.setState({jsonName})}
-                value={this.state.jsonName}
-              />
-              <Button
-                onPress={this.getJson}
-                title="get json"
-                color="#841584"
-              />  */}
-              <Button
-                onPress={this.handleClose}
-                title="Close connection"
-                color="#841584"
-              /> 
+              <Text style={styles.welcome}>Countdown</Text>
+              <Text style={styles.welcome}>{countMsg}</Text> 
+              <View style={styles.containerButton}>
+                <Button
+                  onPress={this.startTest}
+                  title="Start Test WebSocket"
+                  color="#841584"
+                />
+              </View>
             </View>
           )
         }
@@ -255,22 +257,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#F5FCFF',
   },
-  containerVideo: {
-        flex: 1,
-        backgroundColor: '#ccc',
-        borderWidth: 1,
-        borderColor: '#000'
-  },
   welcome: {
     fontSize: 20,
     textAlign: 'center',
     margin: 10,
   },
-  instructions: {
-    textAlign: 'center',
-    color: '#333333',
-    marginBottom: 5,
-  },
+  containerButton: {
+    width: 200,
+    height: 200,
+  }
 });
 
 export default App;
